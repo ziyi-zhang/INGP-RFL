@@ -148,6 +148,7 @@ public:
 			uint32_t spp,
 			uint32_t padded_output_width,
 			uint32_t n_extra_dims,
+            bool composite_normal,
 			const ivec2& resolution,
 			const vec2& focal_length,
 			const mat4x3& camera_matrix0,
@@ -196,11 +197,17 @@ public:
 			float min_transmittance,
 			float glow_y_cutoff,
 			int glow_mode,
+			bool surface_rendering,
+			bool occ_as_thres,
+			float surface_threshold,
+			bool fd_normal,
+			float fd_normal_epsilon,
+			bool reflected_dir,
 			const float* extra_dims_gpu,
 			cudaStream_t stream
 		);
 
-		void enlarge(size_t n_elements, uint32_t padded_output_width, uint32_t n_extra_dims, cudaStream_t stream);
+		void enlarge(size_t n_elements, uint32_t padded_output_width, uint32_t n_extra_dims, bool composite_normal, cudaStream_t stream);
 		RaysNerfSoa& rays_hit() { return m_rays_hit; }
 		RaysNerfSoa& rays_init() { return m_rays[0]; }
 		uint32_t n_rays_initialized() const { return m_n_rays_initialized; }
@@ -213,6 +220,32 @@ public:
 		uint32_t* m_hit_counter;
 		uint32_t* m_alive_counter;
 		uint32_t m_n_rays_initialized = 0;
+		GPUMemoryArena::Allocation m_scratch_alloc;
+	};
+
+	class FiniteDifferenceNormalsNeRF {
+	public:
+		void enlarge(uint32_t n_elements, cudaStream_t stream);
+		void compute_density(
+			const std::shared_ptr<NerfNetwork<network_precision_t>>& network,
+			uint32_t n_elements, const vec3* pos, float* density_out, cudaStream_t stream);
+		void compute_normal(
+			const std::shared_ptr<NerfNetwork<network_precision_t>>& network,
+			uint32_t n_elements, const vec3* pos, vec3* normal, float epsilon, cudaStream_t stream);
+
+	private:
+		vec3* dx;
+		vec3* dy;
+		vec3* dz;
+
+		float* val_dx_pos;
+		float* val_dy_pos;
+		float* val_dz_pos;
+
+		float* val_dx_neg;
+		float* val_dy_neg;
+		float* val_dz_neg;
+
 		GPUMemoryArena::Allocation m_scratch_alloc;
 	};
 
@@ -420,7 +453,7 @@ public:
 	};
 
 	void train_nerf(uint32_t target_batch_size, bool get_loss_scalar, cudaStream_t stream);
-	void train_nerf_step(uint32_t target_batch_size, NerfCounters& counters, cudaStream_t stream);
+	void train_nerf_step(uint32_t target_batch_size, NerfCounters& counters, cudaStream_t stream, bool debug);
 	void train_sdf(size_t target_batch_size, bool get_loss_scalar, cudaStream_t stream);
 	void train_image(size_t target_batch_size, bool get_loss_scalar, cudaStream_t stream);
 	void set_train(bool mtrain);
@@ -442,6 +475,7 @@ public:
 	GPUMemory<float> get_sdf_gt_on_grid(ivec3 res3d, const BoundingBox& aabb, const mat3& render_aabb_to_local); // sdf gt version (sdf only)
 	GPUMemory<vec4> get_rgba_on_grid(ivec3 res3d, vec3 ray_dir, bool voxel_centers, float depth, bool density_as_alpha = false);
 	int marching_cubes(ivec3 res3d, const BoundingBox& render_aabb, const mat3& render_aabb_to_local, float thresh);
+	void dense_marching_cubes(ivec3 res3d, const BoundingBox& render_aabb, const mat3& render_aabb_to_local, float thresh);
 
 	float get_depth_from_renderbuffer(const CudaRenderBuffer& render_buffer, const vec2& uv);
 	vec3 get_3d_pos_from_pixel(const CudaRenderBuffer& render_buffer, const vec2& focus_pixel);
@@ -485,6 +519,7 @@ public:
 	vec2 fov_xy() const ;
 	void set_fov_xy(const vec2& val);
 	void save_snapshot(const fs::path& path, bool include_optimizer_state, bool compress);
+	void save_raw_volumes(const fs::path &filename, int res, BoundingBox aabb, bool flip_y_and_z_axes);
 	void load_snapshot(nlohmann::json config);
 	void load_snapshot(const fs::path& path);
 	void load_snapshot(std::istream& stream, bool is_compressed = true);
@@ -495,6 +530,10 @@ public:
 	void load_camera_path(const fs::path& path);
 	bool loop_animation();
 	void set_loop_animation(bool value);
+
+	void set_train_mode(ETrainMode);
+	void set_surface_rendering(bool);
+	void set_laplacian_mode(ELaplacianMode);
 
 	float compute_image_mse(bool quantize_to_byte);
 
@@ -507,8 +546,8 @@ public:
 	////////////////////////////////////////////////////////////////
 	// marching cubes related state
 	struct MeshState {
-		float thresh = 2.5f;
-		int res = 256;
+		float thresh = 7.258f;  // At 2048 step size, this gives occupancy of 0.5
+		int res = 512;
 		bool unwrap = false;
 		float smooth_amount = 2048.f;
 		float density_amount = 128.f;
@@ -537,6 +576,34 @@ public:
 	MeshState m_mesh;
 	bool m_want_repl = false;
 
+	class LatticeGrid {
+	public:
+		ivec3 res3d;
+		BoundingBox aabb;
+		vec3 intv;
+		ivec3 block_res;
+		int num_blocks_x, num_blocks_y, num_blocks_z;
+
+		LatticeGrid(ivec3 resolution, BoundingBox bounds, ivec3 block_resolution)
+			: res3d(resolution), aabb(bounds), block_res(block_resolution) {
+			vec3 aabb_min = aabb.min;
+			vec3 aabb_max = aabb.max;
+
+			vec3 bounds_size = aabb_max - aabb_min;
+			intv = bounds_size / vec3(res3d.x, res3d.y, res3d.z);
+
+			num_blocks_x = (res3d.x + block_res.x - 1) / block_res.x;
+			num_blocks_y = (res3d.y + block_res.y - 1) / block_res.y;
+			num_blocks_z = (res3d.z + block_res.z - 1) / block_res.z;
+		}
+
+		BoundingBox get_block_aabb(int bx, int by, int bz) {
+			vec3 min_block = aabb.min + vec3(bx, by, bz) * vec3(block_res) * intv;
+			vec3 max_block = min_block + vec3(block_res) * intv;
+			return BoundingBox(min_block, max_block);
+		}
+	};
+
 	bool m_render_window = false;
 	bool m_gather_histograms = false;
 
@@ -548,6 +615,7 @@ public:
 
 	bool m_train = false;
 	bool m_training_data_available = false;
+	bool m_train_one_step = false;
 	bool m_render = true;
 	int m_max_spp = 0;
 	ETestbedMode m_testbed_mode = ETestbedMode::None;
@@ -688,6 +756,7 @@ public:
 
 			bool random_bg_color = true;
 			bool linear_colors = false;
+			bool ignore_json_loss = false;  // To support setting loss from run.py
 			ELossType loss_type = ELossType::L2;
 			ELossType depth_loss_type = ELossType::L1;
 			bool snap_to_pixel_centers = true;
@@ -716,6 +785,51 @@ public:
 			int view = 0;
 
 			float depth_supervision_lambda = 0.f;
+			ETrainMode train_mode = ETrainMode::RFL;
+			bool mw_warm_start = true;  // Note: 'mw' stands for 'many-worlds', which is later renamed to 'rfl' for this paper
+			uint32_t mw_warm_start_steps = 5000u;
+			bool reversed_train = true;
+			float throughput_thres = 1e-4f;
+			bool floaters_no_more = true;
+			bool adjust_transmittance = false;
+			float adjust_transmittance_strength = 4.f;
+			float adjust_transmittance_thres = 0.f;
+			bool early_density_suppression = false;
+			uint32_t early_density_suppression_end = 1000u;
+			uint32_t lock_level = 0u;
+
+            bool random_dropout = false;
+            float random_dropout_thres = 2.f;  // Without activation
+            uint32_t random_dropout_batch_size = 8192;
+
+			ELaplacianMode laplacian_mode = ELaplacianMode::Disabled;
+			bool laplacian_weight_decay = true;
+			uint32_t laplacian_weight_decay_steps = 500u;
+			float laplacian_weight_decay_strength = 2e-2f;
+			float laplacian_weight_decay_min = 1e-3f;
+			bool laplacian_candidate_on_grid = false;
+			float laplacian_fd_epsilon_min = 1.f / 1024.f;  // ~ 1mm for a unit cube
+			float laplacian_fd_epsilon = 8.f * laplacian_fd_epsilon_min;
+			float laplacian_weight = laplacian_weight_decay_strength;  // Very large, to be decayed
+			float laplacian_density_thres = 6.f;  // Without activation
+			uint32_t refinement_start = 1000000u;  // Optional refinement stage after this many steps
+			float laplacian_refinement_strength = 1e-5;
+			uint32_t laplacian_batch_size = 4096 * 4;
+			// Table for occupancy and sigma assuming step size of 2048
+			// alpha: 0.01   -- sigma: 20.6
+			// alpha: 0.05   -- sigma: 105.0
+			// alpha: 0.1    -- sigma: 215.8
+			// alpha: 0.2    -- sigma: 457.0
+			// alpha: 0.3    -- sigma: 730.5
+			// alpha: 0.4    -- sigma: 1046.2
+			// alpha: 0.5    -- sigma: 1419.6
+			// alpha: 0.6    -- sigma: 1876.6
+			// alpha: 0.7    -- sigma: 2465.7
+			// alpha: 0.8    -- sigma: 3296.1
+			// alpha: 0.9    -- sigma: 4715.7
+			// alpha: 0.95   -- sigma: 6135.3
+			// alpha: 0.99   -- sigma: 9431.4
+			// alpha: 0.999  -- sigma: 14147.1
 
 			GPUMemory<float> sharpness_grid;
 
@@ -762,6 +876,13 @@ public:
 		bool visualize_cameras = false;
 		bool render_with_lens_distortion = false;
 		Lens render_lens = {};
+
+		bool surface_rendering = true;
+		bool occ_as_thres = true;
+		float surface_threshold = 0.5f;
+		bool fd_normal = true;
+		float fd_normal_epsilon = 1.f / 2048.f;
+		bool reflected_dir = false;
 
 		float render_min_transmittance = 0.01f;
 		bool render_gbuffer_hard_edges = false;

@@ -15,6 +15,18 @@ jobs:
     strategy:
       matrix:
         include:
+          - os: ubuntu-24.04
+            cuda: "12.8"
+            arch: 120
+            python: "3.12"
+          - os: ubuntu-24.04
+            cuda: "12.8"
+            arch: 100
+            python: "3.12"
+          - os: ubuntu-24.04
+            cuda: "12.6"
+            arch: 89
+            python: "3.12"
           - os: ubuntu-22.04
             cuda: "11.7"
             arch: 86
@@ -47,20 +59,20 @@ jobs:
     steps:
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install build-essential python3-dev libglfw3-dev libglew-dev libxinerama-dev libxcursor-dev libxi-dev
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
       - run: pip install -r requirements.txt
       - name: Install CUDA
         env:
           cuda: ${{ matrix.cuda }}
-        run: ./dependencies/cuda-cmake-github-actions/scripts/actions/install_cuda_ubuntu.sh
+        run: ./dependencies/tiny-cuda-nn/dependencies/cuda-cmake-github-actions/scripts/actions/install_cuda_ubuntu.sh
         shell: bash
       - name: Install Vulkan SDK
-        uses: humbletim/install-vulkan-sdk@v1.1.1
+        uses: humbletim/install-vulkan-sdk@c2aa128094d42ba02959a660f03e0a4e012192f9
       - name: CMake
         run: cmake . -B ${{ env.build_dir }} ${{ matrix.cmake_flags }} -DCMAKE_BUILD_TYPE=${{ env.config }}
       - name: Build
@@ -73,49 +85,55 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: windows-2019
-            visual_studio: "Visual Studio 16 2019"
-            cuda: "11.5.1"
+          - os: windows-2025
+            visual_studio: "Visual Studio 17 2022"
+            cuda: "12.9.1"
+            arch: 120
+            python: "3.12"
+            recommended_gpus: "RTX-5000"
+          - os: windows-2025
+            visual_studio: "Visual Studio 17 2022"
+            cuda: "12.6.3"
+            arch: 89
+            python: "3.12"
+          - os: windows-2022
+            visual_studio: "Visual Studio 17 2022"
+            cuda: "12.6.3"
             arch: 86
             python: "3.11"
             recommended_gpus: "RTX-3000-and-4000"
-          - os: windows-2019
-            visual_studio: "Visual Studio 16 2019"
-            cuda: "11.5.1"
+          - os: windows-2022
+            visual_studio: "Visual Studio 17 2022"
+            cuda: "12.6.3"
             arch: 75
             python: "3.10"
             recommended_gpus: "RTX-2000"
-          - os: windows-2019
-            visual_studio: "Visual Studio 16 2019"
-            cuda: "11.5.1"
+          - os: windows-2022
+            visual_studio: "Visual Studio 17 2022"
+            cuda: "12.6.3"
             arch: 70
             python: "3.9"
-          - os: windows-2019
-            visual_studio: "Visual Studio 16 2019"
-            cuda: "11.5.1"
+          - os: windows-2022
+            visual_studio: "Visual Studio 17 2022"
+            cuda: "12.6.3"
             arch: 61
             python: "3.8"
             recommended_gpus: "GTX-1000"
-          - os: windows-2019
-            visual_studio: "Visual Studio 16 2019"
-            cuda: "11.5.1"
+          - os: windows-2022
+            visual_studio: "Visual Studio 17 2022"
+            cuda: "12.6.3"
             arch: 53
             python: "3.7"
             cmake_flags: "-DNGP_BUILD_WITH_GUI=OFF -DNGP_BUILD_WITH_VULKAN=OFF -DNGP_BUILD_WITH_OPTIX=OFF"
-          - os: windows-2019
-            visual_studio: "Visual Studio 16 2019"
-            cuda: "11.5.1"
-            arch: 37
-            python: "3.7"
     env:
       build_dir: "build"
       config: "Release"
       TCNN_CUDA_ARCHITECTURES: ${{ matrix.arch }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
       - run: pip install -r requirements.txt
@@ -124,9 +142,9 @@ jobs:
           cuda: ${{ matrix.cuda }}
           visual_studio: ${{ matrix.visual_studio }}
         shell: powershell
-        run: .\dependencies\cuda-cmake-github-actions\scripts\actions\install_cuda_windows.ps1
+        run: .\dependencies\tiny-cuda-nn\dependencies\cuda-cmake-github-actions\scripts\actions\install_cuda_windows.ps1
       - name: Install Vulkan SDK
-        uses: humbletim/install-vulkan-sdk@v1.1.1
+        uses: humbletim/install-vulkan-sdk@c2aa128094d42ba02959a660f03e0a4e012192f9
       - name: CMake
         run: cmake . -B ${{ env.build_dir }} ${{ matrix.cmake_flags }} -G "${{ matrix.visual_studio }}" -A x64
       - name: Build
@@ -134,7 +152,7 @@ jobs:
         run: cmake --build . --config ${{ env.config }} --target ALL_BUILD --verbose
       - name: Upload release
         if: ${{ matrix.recommended_gpus }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Instant-NGP-for-${{ matrix.recommended_gpus }}
           path: |
@@ -168,7 +186,7 @@ jobs:
     if: github.ref == 'refs/heads/master'
     steps:
       - name: Grab binary artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
       - name: Package
         run: for i in */; do zip -r "${i%/}.zip" "$i"; done
       - name: Update release

@@ -400,6 +400,16 @@ void Testbed::translate_camera(const vec3& rel, const mat3& rot, bool allow_up_d
 
 void Testbed::set_nerf_camera_matrix(const mat4x3& cam) {
 	m_camera = m_nerf.training.dataset.nerf_matrix_to_ngp(cam);
+	// printf("Setting camera to:\n");
+	// for (int i = 0; i < 4; ++i) {
+	// 	printf("%f %f %f\n", m_camera[i].x, m_camera[i].y, m_camera[i].z);
+	// }
+	// printf("\n");
+	// printf("Input is %f %f %f\n", cam[0].x, cam[0].y, cam[0].z);
+	// printf("Input is %f %f %f\n", cam[1].x, cam[1].y, cam[1].z);
+	// printf("Input is %f %f %f\n", cam[2].x, cam[2].y, cam[2].z);
+	// printf("Input is %f %f %f\n", cam[3].x, cam[3].y, cam[3].z);
+	// printf("\n");
 }
 
 vec3 Testbed::look_at() const {
@@ -491,6 +501,7 @@ void Testbed::reset_camera() {
 
 	m_smoothed_camera = m_camera;
 	m_sun_dir = normalize(vec3(1.0f));
+	m_fps_camera = false;
 
 	reset_accumulation();
 }
@@ -508,7 +519,8 @@ void Testbed::compute_and_save_marching_cubes_mesh(const fs::path& filename, ive
 		aabb = m_testbed_mode == ETestbedMode::Nerf ? m_render_aabb : m_aabb;
 		render_aabb_to_local = m_render_aabb_to_local;
 	}
-	marching_cubes(res3d, aabb, render_aabb_to_local, thresh);
+	dense_marching_cubes(res3d, aabb, render_aabb_to_local, thresh);
+    printf("Saving mesh to %s...\n", filename.str().c_str());
 	save_mesh(m_mesh.verts, m_mesh.vert_normals, m_mesh.vert_colors, m_mesh.indices, filename, unwrap_it, m_nerf.training.dataset.scale, m_nerf.training.dataset.offset);
 }
 
@@ -931,6 +943,147 @@ void Testbed::imgui() {
 		ImGui::SameLine();
 		ImGui::Checkbox("rand levels", &m_max_level_rand_training);
 		if (m_testbed_mode == ETestbedMode::Nerf) {
+			ImGui::PushItemWidth(ImGui::GetWindowWidth() * 0.2f);
+			if (ImGui::Combo("Train mode", (int*)&m_nerf.training.train_mode, TrainModeStr)) {
+				if (m_nerf.training.train_mode != ETrainMode::RFL)
+					m_nerf.surface_rendering = false;
+			}
+			ImGui::PopItemWidth();
+			ImGui::SameLine();
+			ImGui::Checkbox("Surface rendering", &m_nerf.surface_rendering);
+
+			// ImGui::Checkbox("Reversed training", &m_nerf.training.reversed_train);
+			// ImGui::SameLine();
+			ImGui::PushItemWidth(ImGui::GetWindowWidth() * 0.2f);
+			// A slider that changes throughput_thres in {1e-6, 1e-5, 1e-4, 1e-3, 1e-2}
+			ImGui::SliderFloat("Throughput thres", &m_nerf.training.throughput_thres, 1e-6f, 1e-2f, "%.1e");
+			ImGui::PopItemWidth();
+
+			ImGui::Checkbox("Floaters no more", &m_nerf.training.floaters_no_more);
+			ImGui::SameLine();
+			ImGui::Checkbox("Warm start", &m_nerf.training.mw_warm_start);
+
+			ImGui::Checkbox("Early density suppression", &m_nerf.training.early_density_suppression);
+			if (m_nerf.training.early_density_suppression) {
+				ImGui::SameLine();
+				ImGui::PushItemWidth(ImGui::GetWindowWidth() * 0.25f);
+				ImGui::SliderInt("End", (int*)&m_nerf.training.early_density_suppression_end, 500, 5000);
+				ImGui::PopItemWidth();
+			}
+
+			if (ImGui::Checkbox("Occ as surface thres", &m_nerf.occ_as_thres)) {
+				if (m_nerf.occ_as_thres) {
+					m_nerf.surface_threshold = 0.5f;
+				} else {
+					m_nerf.surface_threshold = 1419.6f;
+				}
+			}
+			ImGui::SameLine();
+			ImGui::PushItemWidth(ImGui::GetWindowWidth() * 0.2f);
+			if (m_nerf.occ_as_thres) {
+				ImGui::SliderFloat("Occupancy thres", &m_nerf.surface_threshold, 0.0f, 1.0f);
+			} else {
+				ImGui::SliderFloat("Density thres", &m_nerf.surface_threshold, 0.0f, 100000.0f, "%.1f", ImGuiSliderFlags_Logarithmic);
+			}
+			ImGui::PopItemWidth();
+
+			ImGui::Checkbox("FD normal", &m_nerf.fd_normal);
+			if (m_nerf.fd_normal) {
+				ImGui::SameLine();
+				ImGui::Text("   eps: %.1e", m_nerf.fd_normal_epsilon);
+				ImGui::SameLine();
+				if (ImGui::Button("x2##1")) {
+					m_nerf.fd_normal_epsilon *= 2.0f;
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("/2##1")) {
+					m_nerf.fd_normal_epsilon /= 2.0f;
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("Use laplacian eps")) {
+					m_nerf.fd_normal_epsilon = m_nerf.training.laplacian_fd_epsilon;
+				}
+			}
+
+            ImGui::Checkbox("Random dropout", &m_nerf.training.random_dropout);
+            if (m_nerf.training.random_dropout) {
+                ImGui::SameLine();
+                ImGui::Text("|  Thres: %.1e", m_nerf.training.random_dropout_thres);
+                ImGui::SameLine();
+                if (ImGui::Button("x2##3")) {
+                    m_nerf.training.random_dropout_thres *= 2.0f;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("/2##3")) {
+                    m_nerf.training.random_dropout_thres /= 2.0f;
+                }
+                ImGui::SameLine();
+                ImGui::Text("| Batch size: %d", m_nerf.training.random_dropout_batch_size);
+            }
+
+			// ImGui::Checkbox("Coarse to fine", &m_nerf.training.coarse_to_fine);
+			// if (m_nerf.training.coarse_to_fine) {
+			// 	ImGui::SameLine();
+			// 	ImGui::PushItemWidth(ImGui::GetWindowWidth() * 0.2f);
+			// 	ImGui::SliderInt("Start level", (int*)&m_nerf.training.coarse_to_fine_start_level, 1, 16);
+			// 	ImGui::SameLine();
+			// 	ImGui::SliderInt("Step", (int*)&m_nerf.training.coarse_to_fine_steps, 200, 2000);
+			// 	ImGui::PopItemWidth();
+			// }
+
+			// ImGui::PushItemWidth(ImGui::GetWindowWidth() * 0.6f);
+			// ImGui::SliderInt("Lock hash levels", (int*)&m_nerf.training.lock_level, 0, 16);
+			// ImGui::PopItemWidth();
+
+			ImGui::PushItemWidth(ImGui::GetWindowWidth() * 0.2f);
+			if (ImGui::Combo("Laplacian loss", (int*)&m_nerf.training.laplacian_mode, LaplacianModeStr)) {
+			}
+			ImGui::PopItemWidth();
+
+			if (m_nerf.training.laplacian_mode != ELaplacianMode::Disabled) {
+
+				ImGui::Text("        |");
+				ImGui::SameLine();
+				ImGui::Checkbox("Decay", &m_nerf.training.laplacian_weight_decay);
+				ImGui::SameLine();
+				ImGui::Text("| strength: %.2f", m_nerf.training.laplacian_weight_decay_strength);
+				ImGui::SameLine();
+				ImGui::Text("| steps: %d", m_nerf.training.laplacian_weight_decay_steps);
+
+				ImGui::Text("        |");
+				ImGui::SameLine();
+				ImGui::Checkbox("Candidate on grid", &m_nerf.training.laplacian_candidate_on_grid);
+				ImGui::SameLine();
+				ImGui::Text("| weight: %.1e", m_nerf.training.laplacian_weight);
+				ImGui::SameLine();
+				if (ImGui::Button("x10##2")) {
+					m_nerf.training.laplacian_weight *= 10.0f;
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("/10##2")) {
+					m_nerf.training.laplacian_weight /= 10.0f;
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("x2##2")) {
+					m_nerf.training.laplacian_weight *= 2.0f;
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("/2##2")) {
+					m_nerf.training.laplacian_weight /= 2.0f;
+				}
+
+				ImGui::Text("        |");
+				ImGui::SameLine();
+				ImGui::PushItemWidth(ImGui::GetWindowWidth() * 0.2f);
+				ImGui::SliderFloat("Filter thres", &m_nerf.training.laplacian_density_thres, 0.f, 12.f);
+				ImGui::PopItemWidth();
+				ImGui::SameLine();
+				ImGui::Text("| Batch size: %d", m_nerf.training.laplacian_batch_size);
+			}
+
+
+			ImGui::Separator();
+
 			ImGui::Checkbox("envmap", &m_nerf.training.train_envmap);
 			ImGui::SameLine();
 			ImGui::Checkbox("extrinsics", &m_nerf.training.optimize_extrinsics);
@@ -938,6 +1091,11 @@ void Testbed::imgui() {
 			ImGui::Checkbox("distortion", &m_nerf.training.optimize_distortion);
 			ImGui::SameLine();
 			ImGui::Checkbox("per-image latents", &m_nerf.training.optimize_extra_dims);
+			ImGui::SameLine();
+			if (ImGui::Button("Step")) {
+				m_train = true;
+				m_train_one_step = true;
+			}
 
 
 			static bool export_extrinsics_in_quat_format = true;
@@ -1444,7 +1602,7 @@ void Testbed::imgui() {
 		}
 	}
 
-	if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
+	if (ImGui::CollapsingHeader("Camera")) {
 		ImGui::Checkbox("First person controls", &m_fps_camera);
 		ImGui::SameLine();
 		ImGui::Checkbox("Smooth motion", &m_camera_smoothing);
@@ -1477,9 +1635,11 @@ void Testbed::imgui() {
 			char buf[2048];
 			vec3 v = view_dir();
 			vec3 p = look_at();
+			vec3 u_real = view_up();
 			vec3 s = m_sun_dir;
 			vec3 u = m_up_dir;
 			vec4 b = m_background_color;
+			auto camera_transform = m_nerf.training.dataset.ngp_matrix_to_nerf(m_camera);
 			snprintf(buf, sizeof(buf),
 				"testbed.background_color = [%0.3f, %0.3f, %0.3f, %0.3f]\n"
 				"testbed.exposure = %0.3f\n"
@@ -1491,16 +1651,25 @@ void Testbed::imgui() {
 				"testbed.fov,testbed.aperture_size,testbed.slice_plane_z = %0.3f,%0.3f,%0.3f\n"
 				"testbed.autofocus_target = [%0.3f,%0.3f,%0.3f]\n"
 				"testbed.autofocus = %s\n\n"
+				"camera trafo:\n"
+				"  [%0.8f, %0.8f, %0.8f, %0.8f],\n"
+				"  [%0.8f, %0.8f, %0.8f, %0.8f],\n"
+				"  [%0.8f, %0.8f, %0.8f, %0.8f],\n"
+				"  [%0.8f, %0.8f, %0.8f, %0.8f]\n"
 				, b.r, b.g, b.b, b.a
 				, m_exposure
 				, s.x, s.y, s.z
-				, u.x, u.y, u.z
+				, u_real.x, u_real.y, u_real.z
 				, v.x, v.y, v.z
 				, p.x, p.y, p.z
 				, scale()
 				, fov(), m_aperture_size, m_slice_plane_z
 				, m_autofocus_target.x, m_autofocus_target.y, m_autofocus_target.z
 				, m_autofocus ? "True" : "False"
+				, camera_transform[0][0], camera_transform[1][0], camera_transform[2][0], camera_transform[3][0]
+				, camera_transform[0][1], camera_transform[1][1], camera_transform[2][1], camera_transform[3][1]
+				, camera_transform[0][2], camera_transform[1][2], camera_transform[2][2], camera_transform[3][2]
+				, 0.0f, 0.0f, 0.0f, 1.0f
 			);
 
 			if (m_testbed_mode == ETestbedMode::Sdf) {
@@ -1589,6 +1758,12 @@ void Testbed::imgui() {
 			bool disable_marching_cubes = m_testbed_mode == ETestbedMode::Sdf && (m_sdf.uses_takikawa_encoding || m_sdf.use_triangle_octree);
 			if (disable_marching_cubes) { ImGui::BeginDisabled(); }
 
+			if (ImGui::Button("Extract high-res mesh")) {
+				dense_marching_cubes(res3d, aabb, m_render_aabb_to_local, m_mesh.thresh);
+				// Don't save here
+				// save_mesh(m_mesh.verts, m_mesh.vert_normals, m_mesh.vert_colors, m_mesh.indices, m_imgui.mesh_path, m_mesh.unwrap, m_nerf.training.dataset.scale, m_nerf.training.dataset.offset);
+			}
+
 			if (imgui_colored_button("Mesh it!", 0.4f)) {
 				marching_cubes(res3d, aabb, m_render_aabb_to_local, m_mesh.thresh);
 				m_nerf.render_with_lens_distortion = false;
@@ -1624,24 +1799,7 @@ void Testbed::imgui() {
 					save_rgba_grid_to_png_sequence(rgba, dir, res3d, flip_y_and_z_axes);
 				}
 				if (imgui_colored_button("Save raw volumes", 0.4f)) {
-					auto effective_view_dir = flip_y_and_z_axes ? vec3{0.0f, 1.0f, 0.0f} : vec3{0.0f, 0.0f, 1.0f};
-					auto old_local = m_render_aabb_to_local;
-					auto old_aabb = m_render_aabb;
-					m_render_aabb_to_local = mat3::identity();
-					auto dir = m_data_path.is_directory() || m_data_path.empty() ? (m_data_path / "volume_raw") : (m_data_path.parent_path() / fmt::format("{}_volume_raw", m_data_path.filename()));
-					if (!dir.exists()) {
-						fs::create_directory(dir);
-					}
-
-					for (int cascade = 0; (1<<cascade)<= m_aabb.diag().x+0.5f; ++cascade) {
-						float radius = (1<<cascade) * 0.5f;
-						m_render_aabb = BoundingBox(vec3(0.5f-radius), vec3(0.5f+radius));
-						// Dump raw density values that the user can then convert to alpha as they please.
-						GPUMemory<vec4> rgba = get_rgba_on_grid(res3d, effective_view_dir, true, 0.0f, true);
-						save_rgba_grid_to_raw_file(rgba, dir, res3d, flip_y_and_z_axes, cascade);
-					}
-					m_render_aabb_to_local = old_local;
-					m_render_aabb = old_aabb;
+					save_raw_volumes(m_data_path, m_mesh.res, {}, flip_y_and_z_axes);
 				}
 			}
 
@@ -1654,7 +1812,7 @@ void Testbed::imgui() {
 
 			ImGui::Text("%dx%dx%d", res3d.x, res3d.y, res3d.z);
 			float thresh_range = (m_testbed_mode == ETestbedMode::Sdf) ? 0.5f : 10.f;
-			ImGui::SliderFloat("MC density threshold",&m_mesh.thresh, -thresh_range, thresh_range);
+			ImGui::SliderFloat("MC density threshold",&m_mesh.thresh, 0, thresh_range);
 			ImGui::Combo("Mesh render mode", (int*)&m_mesh_render_mode, "Off\0Vertex Colors\0Vertex Normals\0\0");
 			ImGui::Checkbox("Unwrap mesh", &m_mesh.unwrap);
 			if (uint32_t tricount = m_mesh.indices.size()/3) {
@@ -1868,16 +2026,42 @@ bool Testbed::keyboard_event() {
 		return false;
 	}
 
+	bool ctrl = ImGui::GetIO().KeyMods & ImGuiKeyModFlags_Ctrl;
+	bool shift = ImGui::GetIO().KeyMods & ImGuiKeyModFlags_Shift;
+
 	for (int idx = 0; idx < std::min((int)ERenderMode::NumRenderModes, 10); ++idx) {
 		char c[] = { "1234567890" };
-		if (ImGui::IsKeyPressed(c[idx])) {
-			m_render_mode = (ERenderMode)idx;
-			reset_accumulation();
+		if (shift) {
+			if (ImGui::IsKeyPressed(c[idx])) {
+				m_nerf.training.train_mode = (ETrainMode)idx;
+			}
+		} else {
+			if (ImGui::IsKeyPressed(c[idx])) {
+				m_render_mode = (ERenderMode)idx;
+				reset_accumulation();
+			}
 		}
 	}
 
-	bool ctrl = ImGui::GetIO().KeyMods & ImGuiKeyModFlags_Ctrl;
-	bool shift = ImGui::GetIO().KeyMods & ImGuiKeyModFlags_Shift;
+	if (ImGui::IsKeyPressed('S') && shift) {
+		m_nerf.surface_rendering = !m_nerf.surface_rendering;
+	}
+
+	if (ImGui::IsKeyPressed('A') && shift) {
+		m_nerf.training.adjust_transmittance = !m_nerf.training.adjust_transmittance;
+	}
+
+	if (ImGui::IsKeyPressed('L') && shift) {
+		if (m_nerf.training.laplacian_mode == ELaplacianMode::Disabled)
+			m_nerf.training.laplacian_mode = ELaplacianMode::Volume;
+		else
+			m_nerf.training.laplacian_mode = ELaplacianMode::Disabled;
+	}
+
+	if (ImGui::IsKeyPressed('C') && shift) {
+		// m_nerf.training.coarse_to_fine = !m_nerf.training.coarse_to_fine;
+		m_nerf.training.early_density_suppression = !m_nerf.training.early_density_suppression;
+	}
 
 	if (ImGui::IsKeyPressed('Z')) {
 		m_camera_path.m_gizmo_op = ImGuizmo::TRANSLATE;
@@ -2000,11 +2184,11 @@ bool Testbed::keyboard_event() {
 		translate_vec.z += 1.0f;
 	}
 
-	if (ImGui::IsKeyDown('A')) {
+	if (ImGui::IsKeyDown('A') && !shift) {
 		translate_vec.x += -1.0f;
 	}
 
-	if (ImGui::IsKeyDown('S')) {
+	if (ImGui::IsKeyDown('S') && !shift) {
 		translate_vec.z += -1.0f;
 	}
 
@@ -2016,7 +2200,7 @@ bool Testbed::keyboard_event() {
 		translate_vec.y += -1.0f;
 	}
 
-	if (ImGui::IsKeyDown('C')) {
+	if (ImGui::IsKeyDown('C') && !shift) {
 		translate_vec.y += 1.0f;
 	}
 
@@ -2721,6 +2905,10 @@ void Testbed::prepare_next_camera_path_frame() {
 void Testbed::train_and_render(bool skip_rendering) {
 	if (m_train) {
 		train(m_training_batch_size);
+		if (m_train_one_step) {
+			m_train = false;
+			m_train_one_step = false;
+		}
 	}
 
 	// If we don't have a trainer, as can happen when having loaded training data or changed modes without having
@@ -3627,7 +3815,9 @@ void Testbed::reset_network(bool clear_density_grid) {
 	auto dims = network_dims();
 
 	if (m_testbed_mode == ETestbedMode::Nerf) {
-		m_nerf.training.loss_type = string_to_loss_type(loss_config.value("otype", "L2"));
+		if (!m_nerf.training.ignore_json_loss) {
+			m_nerf.training.loss_type = string_to_loss_type(loss_config.value("otype", "L2"));
+		}
 
 		// Some of the Nerf-supported losses are not supported by Loss,
 		// so just create a dummy L2 loss there. The NeRF code path will bypass
@@ -3658,7 +3848,11 @@ void Testbed::reset_network(bool clear_density_grid) {
 			encoding_config["base_resolution"] = m_base_grid_resolution;
 		}
 
+		// zz: changed from 2048 to 4096? benchmarking needed!! TODO FIXME
 		float desired_resolution = 2048.0f; // Desired resolution of the finest hashgrid level over the unit cube
+		// (1) We use a larger epsilon for laplacian loss to avoid oversmoothing all details.
+		// (2) Don't multiply by `(float)m_nerf.training.dataset.aabb_scale` since NerfCoordinate is in [0, 1]
+		m_nerf.fd_normal_epsilon = 1.0f / desired_resolution;  // For visualization
 		if (m_testbed_mode == ETestbedMode::Image) {
 			desired_resolution = max(m_image.resolution) / 2.0f;
 		} else if (m_testbed_mode == ETestbedMode::Volume) {
@@ -4754,6 +4948,41 @@ void Testbed::save_snapshot(const fs::path& path, bool include_optimizer_state, 
 	tlog::success() << "Saved snapshot '" << path.str() << "'";
 }
 
+void Testbed::save_raw_volumes(const fs::path &filename, int res, BoundingBox aabb, bool flip_y_and_z_axes)
+{
+	auto effective_view_dir = flip_y_and_z_axes ? vec3{0.0f, 1.0f, 0.0f} : vec3{0.0f, 0.0f, 1.0f};
+	mat3 render_aabb_to_local = mat3(1.0f);
+
+	if (aabb.is_empty())
+	{
+		aabb = m_testbed_mode == ETestbedMode::Nerf ? m_render_aabb : m_aabb;
+		render_aabb_to_local = m_render_aabb_to_local;
+	}
+
+	if (m_testbed_mode != ETestbedMode::Nerf)
+	{
+		throw std::runtime_error{"Raw volume export is only supported for NeRF."};
+	}
+
+	auto res3d = get_marching_cubes_res(res, aabb);
+
+	std::string flipped = flip_y_and_z_axes ? "_flipedYZ" : "";
+	auto dir =( filename.is_directory() || filename.empty() ? (filename / fmt::format("volume_raw{}",flipped)) : (filename.parent_path() / fmt::format("{}_volume_raw{}", filename.filename(),flipped))) ;
+	if (!dir.exists())
+	{
+		fs::create_directory(dir);
+	}
+
+	for (int cascade = 0; (1 << cascade) <= m_aabb.diag().x + 0.5f; ++cascade)
+	{
+		float radius = (1 << cascade) * 0.5f;
+		m_render_aabb = BoundingBox(vec3(0.5f - radius), vec3(0.5f + radius));
+		// Dump raw density values that the user can then convert to alpha as they please.
+		GPUMemory<vec4> rgba = get_rgba_on_grid(res3d, effective_view_dir, true, 0.0f, true);
+		save_rgba_grid_to_raw_file(rgba, dir, res3d, flip_y_and_z_axes, cascade);
+	}
+}
+
 void Testbed::load_snapshot(nlohmann::json config) {
 	const auto& snapshot = config["snapshot"];
 	if (snapshot.value("version", 0) < SNAPSHOT_FORMAT_VERSION) {
@@ -5028,5 +5257,16 @@ void Testbed::set_loop_animation(bool value) {
 	m_camera_path.loop = value;
 }
 
+void Testbed::set_train_mode(ETrainMode mode) {
+	m_nerf.training.train_mode = mode;
 }
 
+void Testbed::set_surface_rendering(bool value) {
+	m_nerf.surface_rendering = value;
+}
+
+void Testbed::set_laplacian_mode(ELaplacianMode laplacian_mode) {
+	m_nerf.training.laplacian_mode = laplacian_mode;
+}
+
+}

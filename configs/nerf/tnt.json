@@ -1,0 +1,30 @@
+{
+	"parent": "base.json",
+	"optimizer": {
+		"otype": "Ema",
+		"decay": 0.95,
+		"nested": {
+			"otype": "ExponentialDecay",
+			"decay_start": 20000,
+			"decay_interval": 10000,
+			"decay_base": 0.33,
+			"nested": {
+				"otype": "Adam",
+				"learning_rate": 1e-2,
+				"beta1": 0.9,
+				"beta2": 0.99,
+				"epsilon": 1e-15,
+				"l2_reg": 1e-6
+			}
+		}
+	},
+	"encoding": {
+		"n_levels": 16
+        // "log2_hashmap_size": 21
+        // "n_features_per_level": 8
+	}
+    // "rgb_network": {
+	// 	"n_neurons": 128,
+	// 	"n_hidden_layers": 4
+	// }
+}

@@ -25,7 +25,7 @@ inline constexpr __device__ uint32_t NERF_GRIDSIZE() { return 128; }
 inline constexpr __device__ uint32_t NERF_GRID_N_CELLS() { return NERF_GRIDSIZE() * NERF_GRIDSIZE() * NERF_GRIDSIZE(); }
 
 inline constexpr __device__ float NERF_RENDERING_NEAR_DISTANCE() { return 0.05f; }
-inline constexpr __device__ uint32_t NERF_STEPS() { return 1024; } // finest number of steps per unit length
+inline constexpr __device__ uint32_t NERF_STEPS() { return 2048; } // finest number of steps per unit length  // zz: prev 1024
 inline constexpr __device__ uint32_t NERF_CASCADES() { return 8; }
 
 inline constexpr __device__ float SQRT3() { return 1.73205080757f; }
@@ -151,6 +151,12 @@ struct NerfPayload {
 	bool alive;
 };
 
+struct RayTrainRecord {
+    uint32_t remaining_samples;
+    uint32_t base;
+    float sigmat;  // sigma * dt
+};
+
 //#define TRIPLANAR_COMPATIBLE_POSITIONS   // if this is defined, then positions are stored as [x,y,z,x] so that it can be split as [x,y] [y,z] [z,x] by the input encoding
 
 struct NerfPosition {
@@ -206,6 +212,10 @@ inline NGP_HOST_DEVICE float network_to_rgb(float val, ENerfActivation activatio
 		case ENerfActivation::ReLU: return val > 0.0f ? val : 0.0f;
 		case ENerfActivation::Logistic: return logistic(val);
 		case ENerfActivation::Exponential: return expf(clamp(val, -10.0f, 10.0f));
+		case ENerfActivation::Squareplus: {
+			float x = val * K_ACT;
+			return 0.5f * (x + sqrtf(x * x + 4)) / K_ACT;
+		}
 		default: assert(false);
 	}
 	return 0.0f;
@@ -217,6 +227,11 @@ inline NGP_HOST_DEVICE float network_to_rgb_derivative(float val, ENerfActivatio
 		case ENerfActivation::ReLU: return val > 0.0f ? 1.0f : 0.0f;
 		case ENerfActivation::Logistic: { float density = logistic(val); return density * (1 - density); };
 		case ENerfActivation::Exponential: return expf(clamp(val, -10.0f, 10.0f));
+		case ENerfActivation::Squareplus: {
+			float x = val * K_ACT;
+			float y = 0.5f * (x + sqrtf(x * x + 4));
+			return y * y / (y * y + 1);
+		}
 		default: assert(false);
 	}
 	return 0.0f;
@@ -235,8 +250,12 @@ inline NGP_HOST_DEVICE float network_to_density(float val, ENerfActivation activ
 	switch (activation) {
 		case ENerfActivation::None: return val;
 		case ENerfActivation::ReLU: return val > 0.0f ? val : 0.0f;
-		case ENerfActivation::Logistic: return logistic(val);
-		case ENerfActivation::Exponential: return expf(val);
+		case ENerfActivation::Logistic: return logistic(val-10.f) * expf(10.f);
+		case ENerfActivation::Exponential: return expf(clamp(val, -15.0f, 15.0f));
+		case ENerfActivation::Squareplus: {
+			float x = val * K_ACT;
+			return 0.5f * (x + sqrtf(x * x + 4)) / K_ACT * 100.f;
+		}
 		default: assert(false);
 	}
 	return 0.0f;
@@ -246,8 +265,13 @@ inline NGP_HOST_DEVICE float network_to_density_derivative(float val, ENerfActiv
 	switch (activation) {
 		case ENerfActivation::None: return 1.0f;
 		case ENerfActivation::ReLU: return val > 0.0f ? 1.0f : 0.0f;
-		case ENerfActivation::Logistic: { float density = logistic(val); return density * (1 - density); };
+		case ENerfActivation::Logistic: { float density = logistic(val-10.f); return density * (1 - density) * expf(10.f); };
 		case ENerfActivation::Exponential: return expf(clamp(val, -15.0f, 15.0f));
+		case ENerfActivation::Squareplus: {
+			float x = val * K_ACT;
+			float y = 0.5f * (x + sqrtf(x * x + 4));
+			return y * y / (y * y + 1) * 100.f;
+		}
 		default: assert(false);
 	}
 	return 0.0f;
@@ -455,6 +479,10 @@ inline NGP_HOST_DEVICE uint32_t mip_from_dt(float dt, const vec3& pos, uint32_t 
 
 	int exponent;
 	frexpf(dt, &exponent);
+    // if (exponent > (int)max_cascade) {
+    //     printf("dt = %f, exponent = %d (int)max_cascade = %d, pos = %f %f %f\n", dt, exponent, (int)max_cascade, pos.x, pos.y, pos.z);
+    // }
+    exponent = fminf(exponent, (int)max_cascade);  // This can happen in extreme cases
 	return (uint32_t)clamp((int)mip, exponent, (int)max_cascade);
 }
 

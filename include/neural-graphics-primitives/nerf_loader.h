@@ -74,6 +74,7 @@ struct NerfDataset {
 	ivec2 envmap_resolution = {0, 0};
 	float scale = 1.0f;
 	int aabb_scale = 1;
+	float near_distance = -1.f;
 	bool from_mitsuba = false;
 	bool is_hdr = false;
 	bool wants_importance_sampling = true;

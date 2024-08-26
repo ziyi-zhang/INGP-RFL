@@ -281,9 +281,10 @@ PYBIND11_MODULE(pyngp, m) {
 		.export_values();
 
 	py::enum_<ERenderMode>(m, "RenderMode")
-		.value("AO", ERenderMode::AO)
+		.value("Direct", ERenderMode::Phong)
 		.value("Shade", ERenderMode::Shade)
 		.value("Normals", ERenderMode::Normals)
+		.value("AO", ERenderMode::AO)
 		.value("Positions", ERenderMode::Positions)
 		.value("Depth", ERenderMode::Depth)
 		.value("Distortion", ERenderMode::Distortion)
@@ -379,6 +380,18 @@ PYBIND11_MODULE(pyngp, m) {
 
 	py::implicitly_convertible<std::string, fs::path>();
 
+	py::enum_<ETrainMode>(m, "TrainMode")
+		.value("RFLrelax", ETrainMode::RFLrelax)
+		.value("NeRF", ETrainMode::NeRF)
+		.value("RFL", ETrainMode::RFL)
+		.export_values();
+
+	py::enum_<ELaplacianMode>(m, "LaplacianMode")
+		.value("Disabled", ELaplacianMode::Disabled)
+		.value("Volume", ELaplacianMode::Volume)
+		.value("Surface", ELaplacianMode::Surface)
+		.export_values();
+
 	py::class_<Testbed> testbed(m, "Testbed");
 	testbed
 		.def(py::init<ETestbedMode>(), py::arg("mode") = ETestbedMode::None)
@@ -423,6 +436,9 @@ PYBIND11_MODULE(pyngp, m) {
 			py::arg("shutter_fraction") = 1.0f
 		)
 		.def("train", &Testbed::train, py::call_guard<py::gil_scoped_release>(), "Perform a single training step with a specified batch size.")
+		.def("set_train_mode", &Testbed::set_train_mode, "Set the training mode.")
+		.def("set_surface_rendering", &Testbed::set_surface_rendering, "Set the training mode.")
+		.def("set_laplacian_mode", &Testbed::set_laplacian_mode, "Set the laplacian mode.")
 		.def("reset", &Testbed::reset_network, py::arg("reset_density_grid") = true, "Reset training.")
 		.def("reset_accumulation", &Testbed::reset_accumulation, "Reset rendering accumulation.",
 			py::arg("due_to_camera_movement") = false,
@@ -443,6 +459,7 @@ PYBIND11_MODULE(pyngp, m) {
 		.def("n_params", &Testbed::n_params, "Number of trainable parameters")
 		.def("n_encoding_params", &Testbed::n_encoding_params, "Number of trainable parameters in the encoding")
 		.def("save_snapshot", &Testbed::save_snapshot, py::arg("path"), py::arg("include_optimizer_state")=false, py::arg("compress")=true, "Save a snapshot of the currently trained model. Optionally compressed (only when saving '.ingp' files).")
+		.def("save_raw_volumes", &Testbed::save_raw_volumes)
 		.def("load_snapshot", py::overload_cast<const fs::path&>(&Testbed::load_snapshot), py::arg("path"), "Load a previously saved snapshot")
 		.def("load_camera_path", &Testbed::load_camera_path, py::arg("path"), "Load a camera path")
 		.def("load_file", &Testbed::load_file, py::arg("path"), "Load a file and automatically determine how to handle it. Can be a snapshot, dataset, network config, or camera path.")
@@ -527,6 +544,11 @@ PYBIND11_MODULE(pyngp, m) {
 		.def_readwrite("visualized_dimension", &Testbed::m_visualized_dimension)
 		.def_readwrite("visualized_layer", &Testbed::m_visualized_layer)
 		.def_property_readonly("loss", [](py::object& obj) { return obj.cast<Testbed&>().m_loss_scalar.val(); })
+		.def_property_readonly("avg_samples_per_ray", [](py::object& obj) {
+            Testbed::Nerf& m_nerf = obj.cast<Testbed&>().m_nerf;
+            return (float) m_nerf.training.counters_rgb.measured_batch_size /
+                   (float) m_nerf.training.counters_rgb.rays_per_batch;
+         })
 		.def_readonly("training_step", &Testbed::m_training_step)
 		.def_readonly("nerf", &Testbed::m_nerf)
 		.def_readonly("sdf", &Testbed::m_sdf)
@@ -591,6 +613,9 @@ PYBIND11_MODULE(pyngp, m) {
 		.def_readwrite("visualize_cameras", &Testbed::Nerf::visualize_cameras)
 		.def_readwrite("glow_y_cutoff", &Testbed::Nerf::glow_y_cutoff)
 		.def_readwrite("glow_mode", &Testbed::Nerf::glow_mode)
+		.def_readwrite("surface_rendering", &Testbed::Nerf::surface_rendering)
+		.def_readwrite("surface_threshold", &Testbed::Nerf::surface_threshold)
+		.def_readwrite("reflected_dir", &Testbed::Nerf::reflected_dir)
 		.def_readwrite("render_gbuffer_hard_edges", &Testbed::Nerf::render_gbuffer_hard_edges)
 		.def_readwrite("rendering_extra_dims_from_training_view", &Testbed::Nerf::rendering_extra_dims_from_training_view, "If non-negative, indicates the training view from which the extra dims are used. If -1, uses the values previously set by `set_rendering_extra_dims`.")
 		.def("find_closest_training_view", &Testbed::Nerf::find_closest_training_view, "Obtain the training view that is closest to the current camera.")
@@ -645,6 +670,7 @@ PYBIND11_MODULE(pyngp, m) {
 		.def_readwrite("random_bg_color", &Testbed::Nerf::Training::random_bg_color)
 		.def_readwrite("n_images_for_training", &Testbed::Nerf::Training::n_images_for_training)
 		.def_readwrite("linear_colors", &Testbed::Nerf::Training::linear_colors)
+		.def_readwrite("ignore_json_loss", &Testbed::Nerf::Training::ignore_json_loss)
 		.def_readwrite("loss_type", &Testbed::Nerf::Training::loss_type)
 		.def_readwrite("depth_loss_type", &Testbed::Nerf::Training::depth_loss_type)
 		.def_readwrite("snap_to_pixel_centers", &Testbed::Nerf::Training::snap_to_pixel_centers)
@@ -667,6 +693,28 @@ PYBIND11_MODULE(pyngp, m) {
 		.def_readwrite("intrinsic_l2_reg", &Testbed::Nerf::Training::intrinsic_l2_reg)
 		.def_readwrite("exposure_l2_reg", &Testbed::Nerf::Training::exposure_l2_reg)
 		.def_readwrite("depth_supervision_lambda", &Testbed::Nerf::Training::depth_supervision_lambda)
+		.def_readwrite("mw_warm_start", &Testbed::Nerf::Training::mw_warm_start)
+		.def_readwrite("reversed_train", &Testbed::Nerf::Training::reversed_train)
+		.def_readwrite("throughput_thres", &Testbed::Nerf::Training::throughput_thres)
+        .def_readwrite("random_dropout", &Testbed::Nerf::Training::random_dropout)
+        .def_readwrite("random_dropout_thres", &Testbed::Nerf::Training::random_dropout_thres)
+		.def_readwrite("adjust_transmittance", &Testbed::Nerf::Training::adjust_transmittance)
+		.def_readwrite("adjust_transmittance_strength", &Testbed::Nerf::Training::adjust_transmittance_strength)
+		.def_readwrite("adjust_transmittance_thres", &Testbed::Nerf::Training::adjust_transmittance_thres)
+		.def_readwrite("mw_warm_start", &Testbed::Nerf::Training::mw_warm_start)
+		.def_readwrite("mw_warm_start_steps", &Testbed::Nerf::Training::mw_warm_start_steps)
+		.def_readwrite("early_density_suppression", &Testbed::Nerf::Training::early_density_suppression)
+		.def_readwrite("early_density_suppression_end", &Testbed::Nerf::Training::early_density_suppression_end)
+		.def_readwrite("laplacian_weight_decay", &Testbed::Nerf::Training::laplacian_weight_decay)
+		.def_readwrite("laplacian_weight_decay_steps", &Testbed::Nerf::Training::laplacian_weight_decay_steps)
+		.def_readwrite("laplacian_weight_decay_strength", &Testbed::Nerf::Training::laplacian_weight_decay_strength)
+		.def_readwrite("laplacian_weight_decay_min", &Testbed::Nerf::Training::laplacian_weight_decay_min)
+		.def_readwrite("laplacian_candidate_on_grid", &Testbed::Nerf::Training::laplacian_candidate_on_grid)
+		.def_readwrite("laplacian_fd_epsilon", &Testbed::Nerf::Training::laplacian_fd_epsilon)
+		.def_readwrite("laplacian_weight", &Testbed::Nerf::Training::laplacian_weight)
+		.def_readwrite("laplacian_density_thres", &Testbed::Nerf::Training::laplacian_density_thres)
+		.def_readwrite("refinement_start", &Testbed::Nerf::Training::refinement_start)
+		.def_readwrite("laplacian_refinement_strength", &Testbed::Nerf::Training::laplacian_refinement_strength)
 		.def_readonly("dataset", &Testbed::Nerf::Training::dataset)
 		.def("get_extra_dims", &Testbed::Nerf::Training::get_extra_dims_cpu, "Get the extra dims (including trained latent code) for a specified training view.")
 		.def("set_camera_intrinsics", &Testbed::Nerf::Training::set_camera_intrinsics,

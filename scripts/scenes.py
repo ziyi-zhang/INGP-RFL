@@ -43,11 +43,39 @@ def nerf_real_360(name, frameidx):
 def mipnerf_360(name, frameidx):
 	return {
 		"data_dir"      : os.path.join(NERF_DATA_FOLDER, f"mipnerf_360/{name}"),
+		"dataset_train" : "train.json",
+		"dataset_test"  : "test.json",
+		"dataset"       : "",
+		"frameidx"      : frameidx
+	}
+
+def DTU(name, frameidx):
+	return {
+		"data_dir"      : os.path.join(NERF_DATA_FOLDER, f"dtu/{name}"),
+		"dataset_train" : "transform.json",
+		"dataset_test"  : "transform.json",
+		"dataset"       : "",
+		"frameidx"      : frameidx
+	}
+
+def bmvs(name, frameidx):
+	return {
+		"data_dir"      : os.path.join(NERF_DATA_FOLDER, f"bmvs/{name}"),
+		"dataset_train" : "transform.json",
+		"dataset_test"  : "transform.json",
+		"dataset"       : "",
+		"frameidx"      : frameidx
+	}
+
+def tnt(name, frameidx):
+	return {
+		"data_dir"      : os.path.join(NERF_DATA_FOLDER, f"TanksandTemples/{name}"),
 		"dataset_train" : "transforms.json",
 		"dataset_test"  : "transforms.json",
 		"dataset"       : "",
 		"frameidx"      : frameidx
 	}
+
 scenes_nerf = {
 	"fox"         : ours_real_converted("fox/", frameidx=0),
 	"lego"      : nerf_synthetic("lego", frameidx=52),
@@ -71,6 +99,62 @@ scenes_nerf = {
 	"kitchen" : mipnerf_360("kitchen", frameidx=0),
 	"room"    : mipnerf_360("room", frameidx=0),
 	"stump"   : mipnerf_360("stump", frameidx=0),
+	"treehill": mipnerf_360("treehill", frameidx=0),
+	"flowers" : mipnerf_360("flowers", frameidx=0),
+
+	# DTU
+    "dtu24": DTU("dtu_scan24", frameidx=0),
+    "dtu_maison": DTU("dtu_scan24", frameidx=0),  # Alias name
+	"dtu_red": DTU("dtu_scan24", frameidx=0),
+    "dtu37": DTU("dtu_scan37", frameidx=0),
+    "dtu_scissors": DTU("dtu_scan37", frameidx=0),
+    "dtu40": DTU("dtu_scan40", frameidx=0),
+    "dtu_stonehenge": DTU("dtu_scan40", frameidx=0),
+    "dtu55": DTU("dtu_scan55", frameidx=0),
+    "dtu_bunny": DTU("dtu_scan55", frameidx=0),
+    "dtu63": DTU("dtu_scan63", frameidx=0),
+    "dtu_fruit": DTU("dtu_scan63", frameidx=0),
+    "dtu65": DTU("dtu_scan65", frameidx=0),
+    "dtu_skull": DTU("dtu_scan65", frameidx=0),
+    "dtu69": DTU("dtu_scan69", frameidx=0),
+    "dtu_christmas": DTU("dtu_scan69", frameidx=0),
+    "dtu83": DTU("dtu_scan83", frameidx=0),
+    "dtu_smurfs": DTU("dtu_scan83", frameidx=0),
+    "dtu97": DTU("dtu_scan97", frameidx=0),
+    "dtu_can": DTU("dtu_scan97", frameidx=0),
+    "dtu105": DTU("dtu_scan105", frameidx=0),
+    "dtu_toy": DTU("dtu_scan105", frameidx=0),
+    "dtu106": DTU("dtu_scan106", frameidx=0),
+    "dtu_pigeon": DTU("dtu_scan106", frameidx=0),
+    "dtu110": DTU("dtu_scan110", frameidx=0),
+    "dtu_gold": DTU("dtu_scan110", frameidx=0),
+    "dtu114": DTU("dtu_scan114", frameidx=0),
+    "dtu_buddha": DTU("dtu_scan114", frameidx=0),
+    "dtu118": DTU("dtu_scan118", frameidx=0),
+    "dtu_angel": DTU("dtu_scan118", frameidx=0),
+    "dtu122": DTU("dtu_scan122", frameidx=0),
+    "dtu_chouette": DTU("dtu_scan122", frameidx=0),
+
+	# BMVS
+    "bm_bear": bmvs("bmvs_bear", frameidx=0),
+    "bm_clock": bmvs("bmvs_clock", frameidx=0),
+	"bm_dog": bmvs("bmvs_dog", frameidx=0),
+    "bm_durian": bmvs("bmvs_durian", frameidx=0),
+    "bm_jade": bmvs("bmvs_jade", frameidx=0),
+    "bm_man": bmvs("bmvs_man", frameidx=0),
+    "bm_sculpture": bmvs("bmvs_sculpture", frameidx=0),
+    "bm_stone": bmvs("bmvs_stone", frameidx=0),
+
+	# Tanks and Temples
+	"tt_barn": tnt("Barn", frameidx=0),
+	"tt_truck": tnt("Truck", frameidx=0),
+	"tt_caterpillar": tnt("Caterpillar", frameidx=0),
+	"tt_biglego": tnt("Caterpillar", frameidx=0),  # Alias name
+	"tt_church": tnt("Church", frameidx=0),
+	"tt_courthouse": tnt("Courthouse", frameidx=0),
+	"tt_ignatius": tnt("Ignatius", frameidx=0),
+	"tt_meetingroom": tnt("Meetingroom", frameidx=0),
+	"tt_cafe": tnt("Meetingroom", frameidx=0),  # Alias name
 }
 
 def ours_mesh(name, up = [0,1,0], infolder=True):

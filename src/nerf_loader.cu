@@ -494,6 +494,10 @@ NerfDataset load_nerf(const std::vector<fs::path>& jsonpaths, float sharpen_amou
 			result.aabb_scale = json["aabb_scale"];
 		}
 
+		if (json.contains("near_distance")) {
+			result.near_distance = json["near_distance"];
+		}
+
 		if (json.contains("offset")) {
 			result.offset =
 				json["offset"].is_array() ?

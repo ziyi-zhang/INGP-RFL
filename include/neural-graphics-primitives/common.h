@@ -39,6 +39,20 @@ using namespace tcnn;
 
 namespace ngp {
 
+enum class ETrainMode : int {
+	NeRF,
+	RFL,
+	RFLrelax,
+};
+static constexpr const char* TrainModeStr = "NeRF\0RFL\0RFLrelax\0\0";
+
+enum class ELaplacianMode : int {
+	Disabled,
+	Volume,
+	Surface,
+};
+static constexpr const char* LaplacianModeStr = "Disabled\0Volume\0Surface\0\0";
+
 enum class EMeshRenderMode : int {
 	Off,
 	VertexColors,
@@ -54,9 +68,10 @@ enum class EGroundTruthRenderMode : int {
 static constexpr const char* GroundTruthRenderModeStr = "Shade\0Depth\0\0";
 
 enum class ERenderMode : int {
-	AO,
+	Phong,
 	Shade,
 	Normals,
+	AO,
 	Positions,
 	Depth,
 	Distortion,
@@ -65,7 +80,7 @@ enum class ERenderMode : int {
 	NumRenderModes,
 	EncodingVis, // EncodingVis exists outside of the standard render modes
 };
-static constexpr const char* RenderModeStr = "AO\0Shade\0Normals\0Positions\0Depth\0Distortion\0Cost\0Slice\0\0";
+static constexpr const char* RenderModeStr = "Phong\0Shade\0Normals\0AO\0Positions\0Depth\0Distortion\0Cost\0Slice\0\0";
 
 enum class ERandomMode : int {
 	Random,
@@ -92,8 +107,9 @@ enum class ENerfActivation : int {
 	ReLU,
 	Logistic,
 	Exponential,
+	Squareplus,
 };
-static constexpr const char* NerfActivationStr = "None\0ReLU\0Logistic\0Exponential\0\0";
+static constexpr const char* NerfActivationStr = "None\0ReLU\0Logistic\0Exponential\0Squareplus\0\0";
 
 enum class EMeshSdfMode : int {
 	Watertight,

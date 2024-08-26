@@ -90,7 +90,12 @@ public:
 		}
 		m_density_network.reset(create_network<T>(local_density_network_config));
 
-		m_rgb_network_input_width = next_multiple(m_dir_encoding->padded_output_width() + m_density_network->padded_output_width(), rgb_alignment);
+        m_composite_normal = rgb_network["composite_normal"];
+        if (m_composite_normal) {
+            m_rgb_network_input_width = next_multiple(m_dir_encoding->padded_output_width() + m_density_network->padded_output_width() + 6, rgb_alignment);
+        } else {
+		    m_rgb_network_input_width = next_multiple(m_dir_encoding->padded_output_width() + m_density_network->padded_output_width(), rgb_alignment);
+        }
 
 		json local_rgb_network_config = rgb_network;
 		local_rgb_network_config["n_input_dims"] = m_rgb_network_input_width;
@@ -104,8 +109,16 @@ public:
 
 	void inference_mixed_precision_impl(cudaStream_t stream, const GPUMatrixDynamic<float>& input, GPUMatrixDynamic<T>& output, bool use_inference_params = true) override {
 		uint32_t batch_size = input.n();
-		GPUMatrixDynamic<T> density_network_input{m_pos_encoding->padded_output_width(), batch_size, stream, m_pos_encoding->preferred_output_layout()};
-		GPUMatrixDynamic<T> rgb_network_input{m_rgb_network_input_width, batch_size, stream, m_dir_encoding->preferred_output_layout()};
+		GPUMatrixDynamic<T> density_network_input{
+			m_pos_encoding->padded_output_width(),  // 32 (n_levels * n_features_per_level)
+			batch_size, 
+			stream, 
+			m_pos_encoding->preferred_output_layout()};
+		GPUMatrixDynamic<T> rgb_network_input{
+			m_rgb_network_input_width,  // 32 = 16 (m_density_network output) + 16 (spherical encoding), could have optional pos + normal composite
+			batch_size,
+			stream,
+			m_dir_encoding->preferred_output_layout()};
 
 		GPUMatrixDynamic<T> density_network_output = rgb_network_input.slice_rows(0, m_density_network->padded_output_width());
 		GPUMatrixDynamic<T> rgb_network_output{output.data(), m_rgb_network->padded_output_width(), batch_size, output.layout()};
@@ -117,15 +130,102 @@ public:
 			use_inference_params
 		);
 
-		m_density_network->inference_mixed_precision(stream, density_network_input, density_network_output, use_inference_params);
+		// If coarse to fine, clear inactive levels
+		// uint32_t max_grid_levels, n_features_per_level;
+		// std::tie(max_grid_levels, n_features_per_level) = m_pos_encoding->level_feature();
+		// if (m_locked_levels < max_grid_levels) {
+		// 	uint32_t num_to_keep = n_features_per_level * m_locked_levels;
+		// 	uint32_t num_to_clear = n_features_per_level * (max_grid_levels - m_locked_levels);
+		// 	if (density_network_input.layout() == AoS) {
+		// 		parallel_for_gpu_aos(stream, batch_size, num_to_clear, [num_to_keep=num_to_keep, out=density_network_input.pitched_ptr()] __device__ (size_t elem, size_t dim) {
+		// 			out(elem)[num_to_keep + dim] = 0;
+		// 		});
+		// 	} else {
+		// 		parallel_for_gpu(stream, batch_size * num_to_clear, [num_to_keep=num_to_keep, out=density_network_input.data() + num_to_keep * batch_size] __device__ (size_t i) {
+		// 			out[i] = 0;
+		// 		});
+		// 	}
+		// }
 
-		auto dir_out = rgb_network_input.slice_rows(m_density_network->padded_output_width(), m_dir_encoding->padded_output_width());
+		m_density_network->inference_mixed_precision(
+			stream,
+			density_network_input,
+			density_network_output,  // First 16 rows of rgb_network_input
+			use_inference_params);
+
+		auto dir_encoded = rgb_network_input.slice_rows(
+			m_density_network->padded_output_width(),
+			m_dir_encoding->padded_output_width()
+		);
 		m_dir_encoding->inference_mixed_precision(
 			stream,
-			input.slice_rows(m_dir_offset, m_dir_encoding->input_width()),
-			dir_out,
+			input.slice_rows(
+                m_dir_offset,  // 4 (pos + dt in NerfCoordinate)
+                m_dir_encoding->input_width()  // 3 (dir)
+            ),
+			dir_encoded,  // Remaining 16 rows of rgb_network_input
 			use_inference_params
 		);
+
+        if (m_composite_normal) {
+            if (rgb_network_input.layout() != RM) {
+                throw std::runtime_error("NerfNetwork::inference_mixed_precision rgb_network_input must be in row major format.");  // FIXME: hard-coded
+            }
+            // Convert float input to type T and store it in rgb_network_input
+            parallel_for_gpu(stream, batch_size, 
+            [in = (float*)input.data(), out = (T*)rgb_network_input.data(),
+            rows_in = input.rows(), rows_out_base = m_dir_encoding->padded_output_width() + m_density_network->padded_output_width(),
+            cols_out = rgb_network_input.cols()] __device__ (size_t i) {
+                // Assumes that rgb_network_input is row-major, and input is column-major
+                // Note: for input matrix, the last 6 rows are pos + normal
+                //       for rgb_network_input, there are additional padding rows
+                out[(rows_out_base + 0) * cols_out + i] = static_cast<T>(in[i * rows_in + rows_in - 6]);  
+                out[(rows_out_base + 1) * cols_out + i] = static_cast<T>(in[i * rows_in + rows_in - 5]);
+                out[(rows_out_base + 2) * cols_out + i] = static_cast<T>(in[i * rows_in + rows_in - 4]);
+                out[(rows_out_base + 3) * cols_out + i] = static_cast<T>(in[i * rows_in + rows_in - 3]);
+                out[(rows_out_base + 4) * cols_out + i] = static_cast<T>(in[i * rows_in + rows_in - 2]);
+                out[(rows_out_base + 5) * cols_out + i] = static_cast<T>(in[i * rows_in + rows_in - 1]);
+            });
+            // Fill the rest with zeros
+            uint32_t num_rows_to_clear = m_rgb_network_input_width - m_density_network->padded_output_width() - m_dir_encoding->padded_output_width() - 6;
+            CUDA_CHECK_THROW(cudaMemsetAsync(
+                rgb_network_input.slice_rows(m_density_network->padded_output_width() + m_dir_encoding->padded_output_width() + 6, num_rows_to_clear).data(),
+                0,
+                batch_size * num_rows_to_clear * sizeof(T),
+                stream
+            ));
+        }
+
+        // Print the first column of input and rgb_network_input
+        // {
+        //     float* input_data = input.data();
+        //     T* rgb_network_input_data = rgb_network_input.data();
+        //     float* input_data_first_col = new float[input.rows()];
+        //     T* rgb_network_input_data_first_col = new T[rgb_network_input.rows()];
+        //     cudaMemcpy(input_data_first_col, input_data, input.rows() * sizeof(float), cudaMemcpyDeviceToHost);
+        //     for (int i = 0; i < rgb_network_input.rows(); i++) {
+        //         cudaMemcpy(rgb_network_input_data_first_col + i, rgb_network_input_data + i * rgb_network_input.cols(), sizeof(T), cudaMemcpyDeviceToHost);
+        //     }
+
+        //     std::cout << "input_data_first_col: ";
+        //     for (int i = 0; i < input.rows(); i++) {
+        //         std::cout << input_data_first_col[i] << " ";
+        //     }
+        //     std::cout << std::endl;
+        //     std::cout << "rgb_network_input_data_first_col: ";
+        //     for (int i = 0; i < rgb_network_input.rows(); i++) {
+        //         std::cout << static_cast<float>(rgb_network_input_data_first_col[i]) << " ";
+        //         if (i == 15) {
+        //             std::cout << std::endl;
+        //         }
+        //         if (i == 31) {
+        //             std::cout << std::endl;
+        //         }
+        //     }
+        //     std::cout << std::endl;
+        //     delete[] input_data_first_col;
+        //     delete[] rgb_network_input_data_first_col;
+        // }
 
 		m_rgb_network->inference_mixed_precision(stream, rgb_network_input, rgb_network_output, use_inference_params);
 
@@ -170,6 +270,30 @@ public:
 			use_inference_params,
 			prepare_input_gradients
 		);
+
+        if (m_composite_normal) {
+            // Convert float input to type T and store it in rgb_network_input
+            parallel_for_gpu(stream, batch_size,
+            [in = (float*)input.data(), out = (T*)forward->rgb_network_input.data(),
+            rows_in = input.rows(), rows_out_base = m_dir_encoding->padded_output_width() + m_density_network->padded_output_width(),
+            cols_out = forward->rgb_network_input.cols()] __device__ (size_t i) {
+                // Assumes that rgb_network_input is row-major, and input is column-major
+                out[(rows_out_base + 0) * cols_out + i] = static_cast<T>(in[i * rows_in + rows_in - 6]);
+                out[(rows_out_base + 1) * cols_out + i] = static_cast<T>(in[i * rows_in + rows_in - 5]);
+                out[(rows_out_base + 2) * cols_out + i] = static_cast<T>(in[i * rows_in + rows_in - 4]);
+                out[(rows_out_base + 3) * cols_out + i] = static_cast<T>(in[i * rows_in + rows_in - 3]);
+                out[(rows_out_base + 4) * cols_out + i] = static_cast<T>(in[i * rows_in + rows_in - 2]);
+                out[(rows_out_base + 5) * cols_out + i] = static_cast<T>(in[i * rows_in + rows_in - 1]);
+            });
+            // Fill the rest with zeros
+            uint32_t num_rows_to_clear = m_rgb_network_input_width - m_density_network->padded_output_width() - m_dir_encoding->padded_output_width() - 6;
+            CUDA_CHECK_THROW(cudaMemsetAsync(
+                forward->rgb_network_input.slice_rows(m_density_network->padded_output_width() + m_dir_encoding->padded_output_width() + 6, num_rows_to_clear).data(),
+                0,
+                batch_size * num_rows_to_clear * sizeof(T),
+                stream
+            ));
+        }
 
 		if (output) {
 			forward->rgb_network_output = GPUMatrixDynamic<T>{output->data(), m_rgb_network->padded_output_width(), batch_size, output->layout()};
@@ -252,6 +376,32 @@ public:
 			GPUMatrixDynamic<float> dL_dpos_encoding_input;
 			if (dL_dinput) {
 				dL_dpos_encoding_input = dL_dinput->slice_rows(0, m_pos_encoding->input_width());
+			}
+
+			// Geometric density refinement
+			{
+				uint32_t max_grid_levels, n_features_per_level;
+				// std::tie(max_grid_levels, n_features_per_level) = m_pos_encoding->level_feature();
+				max_grid_levels = 16u;
+				n_features_per_level = 4u;
+
+				uint32_t num_to_lock = n_features_per_level * m_locked_levels;
+				bool dummy_lock = false;
+				if (num_to_lock == 0) {
+					num_to_lock = 1u;  // To make CUDA graph happy
+					dummy_lock = true;
+				}
+				if (dL_ddensity_network_input.layout() == AoS) {
+					parallel_for_gpu_aos(stream, batch_size, num_to_lock, [dummy_lock=dummy_lock, out=dL_ddensity_network_input.pitched_ptr()] __device__ (size_t elem, size_t dim) {
+						if (!dummy_lock)
+							out(elem)[dim] = 0;
+					});
+				} else {
+					parallel_for_gpu(stream, batch_size * num_to_lock, [dummy_lock=dummy_lock, out=dL_ddensity_network_input.data()] __device__ (size_t i) {
+						if (!dummy_lock)
+							out[i] = 0;
+					});
+				}
 			}
 
 			m_pos_encoding->backward(
@@ -393,7 +543,11 @@ public:
 	}
 
 	uint32_t input_width() const override {
-		return m_dir_offset + m_n_dir_dims + m_n_extra_dims;
+		uint32_t res = m_dir_offset + m_n_dir_dims + m_n_extra_dims;
+        if (m_composite_normal) {
+            res += 6;
+        }
+        return res;
 	}
 
 	uint32_t output_width() const override {
@@ -460,6 +614,10 @@ public:
 		return m_rgb_network;
 	}
 
+    bool composite_normal() const {
+        return m_composite_normal;
+    }
+
 	json hyperparams() const override {
 		json density_network_hyperparams = m_density_network->hyperparams();
 		density_network_hyperparams["n_output_dims"] = m_density_network->padded_output_width();
@@ -472,6 +630,8 @@ public:
 		};
 	}
 
+	uint32_t m_locked_levels = (uint32_t)0;
+
 private:
 	std::shared_ptr<Network<T>> m_density_network;
 	std::shared_ptr<Network<T>> m_rgb_network;
@@ -481,6 +641,7 @@ private:
 	// Aggregates m_pos_encoding and m_density_network
 	std::shared_ptr<NetworkWithInputEncoding<T>> m_density_model;
 
+    bool m_composite_normal = false;
 	uint32_t m_rgb_network_input_width;
 	uint32_t m_n_pos_dims;
 	uint32_t m_n_dir_dims;

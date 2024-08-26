@@ -1,4 +1,56 @@
-# Instant Neural Graphics Primitives ![](https://github.com/NVlabs/instant-ngp/workflows/CI/badge.svg)
+# Radiance Surfaces: Optimizing Surface Representations with a 5D Radiance Field Loss
+
+This repository contains the research code for the paper:
+
+> __Radiance Surfaces: Optimizing Surface Representations with a 5D Radiance Field Loss__
+> [Ziyi Zhang](https://ziyi-zhang.github.io/), [Nicolas Roussel](https://rgl.epfl.ch/people/nroussel), [Thomas Müller](https://tom94.net), [Tizian Zeltner](https://tizianzeltner.com), [Merlin Nimier-David](https://merlin.nimierdavid.fr), [Fabrice Rousselle](https://research.nvidia.com/person/fabrice-rousselle), and [Wenzel Jakob](https://rgl.epfl.ch/people/wjakob)
+> _ACM Transactions on Graphics (__SIGGRAPH__), August 2025_
+> __[Project page](https://rgl.epfl.ch/publications/Zhang2025Radiance)&nbsp;/ [Paper](https://rgl.s3.eu-central-1.amazonaws.com/media/papers/Zhang2025Radiance.pdf)__
+
+
+> ⚠️ This repository is a standalone research release and is not part of the official [instant-ngp](https://github.com/NVlabs/instant-ngp) codebase.
+> It does not support JIT mode (introduced on July 8, 2025) for faster training/rendering. We plan to re-implement a JIT-compatible version for future release.
+
+### Features
+
+This fork introduces new training modes and configuration options to the Instant-NGP GUI, while preserving all original functionality:
+```bash
+$ ./instant-ngp {scene_json}
+```
+
+
+To get a visual sense of how RFL behaves, you can begin by training a scene using standard NeRF and switch to RFL mode on-the-fly to observe the immediate impact---e.g., a rapid drop in `samples/ray`.
+You can also enable Laplacian regularization and visualize the resulting geometry smoothing by setting `render_mode=Normals`.
+
+---
+
+### Reproducing Results from the Paper
+
+We provide scripts to replicate the key experiments. Datasets used in the paper are available [here on Zenodo](https://zenodo.org/records/15910072), but any dataset in the INGP format is supported.
+
+- Novel view synthesis (no regularization):
+```bash
+$ python3 nvs_comparison.py
+```
+
+- Geometry optimization with Laplacian regularization:
+```bash
+$ ./run_geometry.sh train_screen dtu {custom_label}
+$ ./run_geometry.sh train_screen bm {custom_label}
+```
+
+- To optionally extract a mesh, it is recommended to use TSDF fusion (using [Open3D](https://www.open3d.org/)):
+```
+$ pip install open3d
+$ python3 scripts/gen_mesh_TSDF.py --parent_folder {parent_folder_with_timestamp} --scene_name {scene_name}
+```
+Alternatively we can use Instant-NGP's built-in Marching Cubes implementation.
+
+The remainder of this README contains the original compilation instructions, usage details, and more.
+
+<hr style="height:4px;border-width:0;color:gray;background-color:gray">
+
+# Instant Neural Graphics Primitives
 
 <img src="docs/assets_readme/fox.gif" height="342"/> <img src="docs/assets_readme/robot5.gif" height="342"/>
 
@@ -7,9 +59,9 @@ Ever wanted to train a NeRF model of a fox in under 5 seconds? Or fly around a s
 Here you will find an implementation of four __neural graphics primitives__, being neural radiance fields (NeRF), signed distance functions (SDFs), neural images, and neural volumes.
 In each case, we train and render a MLP with multiresolution hash input encoding using the [__tiny-cuda-nn__](https://github.com/NVlabs/tiny-cuda-nn) framework.
 
-> __Instant Neural Graphics Primitives with a Multiresolution Hash Encoding__  
-> [Thomas Müller](https://tom94.net), [Alex Evans](https://research.nvidia.com/person/alex-evans), [Christoph Schied](https://research.nvidia.com/person/christoph-schied), [Alexander Keller](https://research.nvidia.com/person/alex-keller)  
-> _ACM Transactions on Graphics (__SIGGRAPH__), July 2022_  
+> __Instant Neural Graphics Primitives with a Multiresolution Hash Encoding__
+> [Thomas Müller](https://tom94.net), [Alex Evans](https://research.nvidia.com/person/alex-evans), [Christoph Schied](https://research.nvidia.com/person/christoph-schied), [Alexander Keller](https://research.nvidia.com/person/alex-keller)
+> _ACM Transactions on Graphics (__SIGGRAPH__), July 2022_
 > __[Project page](https://nvlabs.github.io/instant-ngp)&nbsp;/ [Paper](https://nvlabs.github.io/instant-ngp/assets/mueller2022instant.pdf)&nbsp;/ [Video](https://nvlabs.github.io/instant-ngp/assets/mueller2022instant.mp4)&nbsp;/ [Presentation](https://tom94.net/data/publications/mueller22instant/mueller22instant-gtc.mp4)&nbsp;/ [Real-Time Live](https://tom94.net/data/publications/mueller22instant/mueller22instant-rtl.mp4)&nbsp;/ [BibTeX](https://nvlabs.github.io/instant-ngp/assets/mueller2022instant.bib)__
 
 For business inquiries, please submit the [NVIDIA research licensing form](https://www.nvidia.com/en-us/research/inquiries/).
@@ -19,6 +71,7 @@ For business inquiries, please submit the [NVIDIA research licensing form](https
 
 If you have Windows, download one of the following releases corresponding to your graphics card and extract it. Then, start `instant-ngp.exe`.
 
+- [**RTX 5000 series and other Blackwell cards**](https://github.com/NVlabs/instant-ngp/releases/download/continuous/Instant-NGP-for-RTX-5000.zip)
 - [**RTX 3000 & 4000 series, RTX A4000&ndash;A6000**, and other Ampere & Ada cards](https://github.com/NVlabs/instant-ngp/releases/download/continuous/Instant-NGP-for-RTX-3000-and-4000.zip)
 - [**RTX 2000 series, Titan RTX, Quadro RTX 4000&ndash;8000**, and other Turing cards](https://github.com/NVlabs/instant-ngp/releases/download/continuous/Instant-NGP-for-RTX-2000.zip)
 - [**GTX 1000 series, Titan Xp, Quadro P1000&ndash;P6000**, and other Pascal cards](https://github.com/NVlabs/instant-ngp/releases/download/continuous/Instant-NGP-for-GTX-1000.zip)
@@ -264,7 +317,7 @@ __A:__ Yes. See [this example](./notebooks/instant_ngp.ipynb) inspired on the no
 ##
 __Q:__ Is there a [Docker container](https://www.docker.com/)?
 
-__A:__ Yes. We bundle a [Visual Studio Code development container](https://code.visualstudio.com/docs/remote/containers), the `.devcontainer/Dockerfile` of which you can also use stand-alone. 
+__A:__ Yes. We bundle a [Visual Studio Code development container](https://code.visualstudio.com/docs/remote/containers), the `.devcontainer/Dockerfile` of which you can also use stand-alone.
 
 If you want to run the container without using VSCode:
 ```
