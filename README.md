@@ -9,7 +9,7 @@ This repository contains the research code for the paper:
 
 
 > ⚠️ This repository is a standalone research release and is not part of the official [instant-ngp](https://github.com/NVlabs/instant-ngp) codebase.
-> It does not support JIT mode (introduced on July 8, 2025) for faster training/rendering. We plan to re-implement a JIT-compatible version for future release.
+> It does not support JIT mode (introduced on July 8, 2025) for faster training/rendering. We are implementing a JIT-compatible core algorithm for future release: https://github.com/NVlabs/instant-ngp/pull/1601.
 
 ### Features
 
