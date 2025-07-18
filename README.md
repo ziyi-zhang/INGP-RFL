@@ -19,8 +19,8 @@ $ ./instant-ngp {scene_json}
 ```
 
 
-To get a visual sense of how RFL behaves, you can begin by training a scene using standard NeRF and switch to RFL mode on-the-fly to observe the immediate impact---e.g., a rapid drop in `samples/ray`.
-You can also enable Laplacian regularization and visualize the resulting geometry smoothing by setting `render_mode=Normals`.
+To get a visual sense of how RFL behaves, you can begin by training a scene using standard NeRF and switch to RFL mode (keyboard: shift+num2) on-the-fly to observe the immediate impact---e.g., a rapid drop in `samples/ray`.
+You can also enable Laplacian regularization and visualize the resulting geometry smoothing by setting `render_mode=Normals` (keyboard: num3).
 
 ---
 
