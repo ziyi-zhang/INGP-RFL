@@ -1,6 +1,6 @@
 # Radiance Surfaces: Optimizing Surface Representations with a 5D Radiance Field Loss
 
-This repository contains the research code for the paper:
+This repository contains the *research code* for the paper:
 
 > __Radiance Surfaces: Optimizing Surface Representations with a 5D Radiance Field Loss__
 > [Ziyi Zhang](https://ziyi-zhang.github.io/), [Nicolas Roussel](https://rgl.epfl.ch/people/nroussel), [Thomas Müller](https://tom94.net), [Tizian Zeltner](https://tizianzeltner.com), [Merlin Nimier-David](https://merlin.nimierdavid.fr), [Fabrice Rousselle](https://research.nvidia.com/person/fabrice-rousselle), and [Wenzel Jakob](https://rgl.epfl.ch/people/wjakob)
@@ -8,8 +8,8 @@ This repository contains the research code for the paper:
 > __[Project page](https://rgl.epfl.ch/publications/Zhang2025Radiance)&nbsp;/ [Paper](https://rgl.s3.eu-central-1.amazonaws.com/media/papers/Zhang2025Radiance.pdf)__
 
 
-> ⚠️ This repository is a standalone research release and is not part of the official [instant-ngp](https://github.com/NVlabs/instant-ngp) codebase.
-> It does not support JIT mode (introduced on July 8, 2025) for faster training/rendering. We are implementing a JIT-compatible core algorithm for future release: https://github.com/NVlabs/instant-ngp/pull/1601.
+⚠️ This repository is a standalone research release and is not part of the official [instant-ngp](https://github.com/NVlabs/instant-ngp) codebase.
+It does not support JIT mode (introduced on July 8, 2025), which accelerates rendering speeds by 5x compared to the performance reported in our paper. We implemented a JIT-compatible core algorithm here: https://github.com/NVlabs/instant-ngp/pull/1601.
 
 ### Features
 
